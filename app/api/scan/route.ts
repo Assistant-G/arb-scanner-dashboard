@@ -43,11 +43,17 @@ function normalize(text: string): string {
 async function fetchPolymarket(): Promise<Market[]> {
   const markets: Market[] = [];
   try {
-    const resp = await fetch(
-      'https://gamma-api.polymarket.com/events?active=true&closed=false&limit=100',
-      { signal: AbortSignal.timeout(15000), cache: 'no-store' }
-    );
-    const events = await resp.json();
+    const allEvents = [];
+    for (let offset = 0; offset < 200; offset += 100) {
+      const resp = await fetch(
+        `https://gamma-api.polymarket.com/events?active=true&closed=false&limit=100&offset=${offset}`,
+        { signal: AbortSignal.timeout(8000), cache: 'no-store' }
+      );
+      const batch = await resp.json();
+      if (!batch || batch.length === 0) break;
+      allEvents.push(...batch);
+    }
+    const events = allEvents;
     for (const event of events) {
       for (const mkt of event.markets || []) {
         if (mkt.closed || !mkt.active) continue;
@@ -77,52 +83,70 @@ async function fetchPolymarket(): Promise<Market[]> {
 
 async function fetchKalshi(): Promise<Market[]> {
   const markets: Market[] = [];
-  let cursor: string | null = null;
-  let pages = 0;
   try {
-    while (markets.length < 200 && pages < 2) {
-      pages++;
-      const params = new URLSearchParams({ limit: '100', status: 'open' });
-      if (cursor) params.set('cursor', cursor);
-      const resp = await fetch(
-        `https://api.elections.kalshi.com/trade-api/v2/markets?${params}`,
-        { signal: AbortSignal.timeout(15000), cache: 'no-store' }
-      );
-      const data = await resp.json();
-      for (const mkt of data.markets || []) {
-        let yes_price: number;
-        const { yes_bid, yes_ask, no_bid, no_ask, last_price } = mkt;
-        if (yes_bid && yes_ask && yes_bid > 0) {
-          yes_price = (yes_bid + yes_ask) / 2 / 100;
-        } else if (yes_ask && yes_ask > 0) {
-          yes_price = yes_ask / 100;
-        } else if (last_price && last_price > 0) {
-          yes_price = last_price / 100;
-        } else continue;
+    // Get all events first
+    const evResp = await fetch(
+      'https://api.elections.kalshi.com/trade-api/v2/events?limit=100&status=open',
+      { signal: AbortSignal.timeout(8000), cache: 'no-store' }
+    );
+    const evData = await evResp.json();
+    const events = evData.events || [];
 
-        let no_price: number;
-        if (no_bid != null && no_ask != null && no_bid > 0) {
-          no_price = (no_bid + no_ask) / 2 / 100;
-        } else {
-          no_price = 1.0 - yes_price;
+    // Fetch markets per event in parallel (sports parlays don't appear under events)
+    const fetchEvent = async (ticker: string, evTitle: string) => {
+      try {
+        const resp = await fetch(
+          `https://api.elections.kalshi.com/trade-api/v2/markets?limit=50&status=open&event_ticker=${ticker}`,
+          { signal: AbortSignal.timeout(5000), cache: 'no-store' }
+        );
+        const data = await resp.json();
+        const result: Market[] = [];
+        for (const mkt of data.markets || []) {
+          const title = mkt.title || '';
+          if (title.startsWith('yes ') || title.startsWith('no ')) continue;
+
+          const { yes_bid, yes_ask, no_bid, no_ask, last_price } = mkt;
+          let yes_price: number;
+          if (yes_bid && yes_ask && yes_bid > 0) {
+            yes_price = (yes_bid + yes_ask) / 2 / 100;
+          } else if (yes_ask && yes_ask > 0) {
+            yes_price = yes_ask / 100;
+          } else if (last_price && last_price > 0) {
+            yes_price = last_price / 100;
+          } else continue;
+
+          let no_price: number;
+          if (no_bid != null && no_ask != null && no_bid > 0) {
+            no_price = (no_bid + no_ask) / 2 / 100;
+          } else {
+            no_price = 1.0 - yes_price;
+          }
+
+          const question = mkt.subtitle
+            ? `${title} - ${mkt.subtitle}`.trim()
+            : `${evTitle} - ${title}`.trim();
+
+          result.push({
+            platform: 'Kalshi',
+            id: mkt.ticker || '',
+            question,
+            event: ticker,
+            yes_price: Math.round(yes_price * 10000) / 10000,
+            no_price: Math.round(no_price * 10000) / 10000,
+            url: `https://kalshi.com/markets/${mkt.ticker || ''}`,
+          });
         }
+        return result;
+      } catch { return []; }
+    };
 
-        const question = mkt.subtitle
-          ? `${mkt.title} ${mkt.subtitle}`.trim()
-          : mkt.title || '';
-
-        markets.push({
-          platform: 'Kalshi',
-          id: mkt.ticker || '',
-          question,
-          event: mkt.event_ticker || '',
-          yes_price: Math.round(yes_price * 10000) / 10000,
-          no_price: Math.round(no_price * 10000) / 10000,
-          url: `https://kalshi.com/markets/${mkt.ticker || ''}`,
-        });
-      }
-      cursor = data.cursor;
-      if (!cursor || (data.markets || []).length < 100) break;
+    // Fetch first 30 events in parallel batches of 10
+    for (let i = 0; i < Math.min(events.length, 30); i += 10) {
+      const batch = events.slice(i, i + 10);
+      const results = await Promise.all(
+        batch.map((e: any) => fetchEvent(e.event_ticker, e.title || ''))
+      );
+      for (const r of results) markets.push(...r);
     }
   } catch (e) {
     console.error('[Kalshi] Error:', e);
@@ -130,22 +154,33 @@ async function fetchKalshi(): Promise<Market[]> {
   return markets;
 }
 
-function matchMarkets(poly: Market[], kalshi: Market[], threshold = 65): Match[] {
+function matchMarkets(poly: Market[], kalshi: Market[], threshold = 40): Match[] {
+  // Strategy 1: Fuse.js fuzzy match
   const normalizedKalshi = kalshi.map(k => ({ ...k, normalized: normalize(k.question) }));
   const fuse = new Fuse(normalizedKalshi, {
-    keys: ['normalized'],
-    threshold: 0.6,
+    keys: ['normalized', 'question'],
+    threshold: 0.8,
+    distance: 300,
     includeScore: true,
+    ignoreLocation: true,
   });
 
   const matches: Match[] = [];
+  const usedKalshi = new Set<string>();
+
   for (const pm of poly) {
     const pq = normalize(pm.question);
+    if (pq.length < 10) continue;
+
     const results = fuse.search(pq);
     if (results.length > 0) {
       const best = results[0];
+      const kid = best.item.id;
+      if (usedKalshi.has(kid)) continue;
+
       const score = Math.round((1 - (best.score || 1)) * 100);
       if (score >= threshold) {
+        usedKalshi.add(kid);
         matches.push({
           polymarket: pm,
           kalshi: best.item,
@@ -154,6 +189,36 @@ function matchMarkets(poly: Market[], kalshi: Market[], threshold = 65): Match[]
       }
     }
   }
+
+  // Strategy 2: keyword overlap scoring
+  for (const pm of poly) {
+    const pWords = new Set(normalize(pm.question).split(' ').filter(w => w.length > 3));
+    if (pWords.size < 2) continue;
+
+    let bestScore = 0;
+    let bestKm: Market | null = null;
+
+    for (const km of kalshi) {
+      if (usedKalshi.has(km.id)) continue;
+      const kWords = new Set(normalize(km.question).split(' ').filter(w => w.length > 3));
+      const overlap = Array.from(pWords).filter(w => kWords.has(w)).length;
+      const score = Math.round(overlap / Math.max(pWords.size, kWords.size) * 100);
+      if (score > bestScore && score >= threshold) {
+        bestScore = score;
+        bestKm = km;
+      }
+    }
+
+    if (bestKm && bestScore >= threshold && !usedKalshi.has(bestKm.id)) {
+      usedKalshi.add(bestKm.id);
+      matches.push({
+        polymarket: pm,
+        kalshi: bestKm,
+        match_score: bestScore,
+      });
+    }
+  }
+
   return matches;
 }
 
@@ -196,6 +261,8 @@ function findArbitrage(matches: Match[]): Arb[] {
   return arbs;
 }
 
+export const maxDuration = 30;
+
 export async function GET() {
   const start = Date.now();
   const [poly, kalshi] = await Promise.all([fetchPolymarket(), fetchKalshi()]);
@@ -208,5 +275,14 @@ export async function GET() {
     kalshiCount: kalshi.length,
     matchCount: matches.length,
     opportunities: arbs,
+    debug: {
+      samplePoly: poly.slice(0, 5).map(m => m.question),
+      sampleKalshi: kalshi.slice(0, 5).map(m => m.question),
+      allMatches: matches.map(m => ({
+        poly: m.polymarket.question.slice(0, 60),
+        kalshi: m.kalshi.question.slice(0, 60),
+        score: m.match_score,
+      })),
+    },
   });
 }
