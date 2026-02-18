@@ -138,7 +138,7 @@ async function fetchKalshi(): Promise<Market[]> {
             platform: 'Kalshi', id: `kalshi-${mkt.ticker || ''}`, question, event: ticker,
             yes_price: Math.round(yes_price * 10000) / 10000,
             no_price: Math.round(no_price * 10000) / 10000,
-            url: `https://kalshi.com/events/${ticker}`,
+            url: `https://kalshi.com/markets/${ticker.replace(/-\d+$/, '')}`,
             volume: parseFloat(String(mkt.volume || 0)) || 0,
             volume24h: parseFloat(String(mkt.volume_24h || 0)) || 0,
             liquidity: parseFloat(String(mkt.liquidity || mkt.open_interest || 0)) || 0,

@@ -182,7 +182,7 @@ export default function Home() {
       a.spread * 100 >= minSpread &&
       a.match_score >= minMatch &&
       Math.min(a.volume_a || 0, a.volume_b || 0) >= minVolume &&
-      (platformFilter.has(a.platformA) || platformFilter.has(a.platformB))
+      (platformFilter.has(a.platformA) && platformFilter.has(a.platformB))
     );
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
