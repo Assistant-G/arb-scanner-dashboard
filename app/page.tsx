@@ -7,21 +7,45 @@ interface Arb {
   spread: number;
   cost: number;
   strategy: string;
-  poly_url: string;
-  kalshi_url: string;
-  poly_yes: number;
-  poly_no: number;
-  kalshi_yes: number;
-  kalshi_no: number;
+  platformA: string;
+  platformB: string;
+  urlA: string;
+  urlB: string;
+  yesA: number;
+  noA: number;
+  yesB: number;
+  noB: number;
 }
 
 interface ScanResult {
   timestamp: string;
   scanTime: number;
-  polymarketCount: number;
-  kalshiCount: number;
+  platformCounts: Record<string, number>;
+  totalMarkets: number;
   matchCount: number;
   opportunities: Arb[];
+}
+
+const platformColors: Record<string, string> = {
+  Polymarket: 'bg-purple-600',
+  Kalshi: 'bg-cyan-600',
+  Manifold: 'bg-amber-600',
+  Metaculus: 'bg-emerald-600',
+};
+
+const platformTextColors: Record<string, string> = {
+  Polymarket: 'text-purple-400',
+  Kalshi: 'text-cyan-400',
+  Manifold: 'text-amber-400',
+  Metaculus: 'text-emerald-400',
+};
+
+function Badge({ platform }: { platform: string }) {
+  return (
+    <span className={`${platformColors[platform] || 'bg-gray-600'} text-white text-[10px] px-1.5 py-0.5 rounded font-medium`}>
+      {platform}
+    </span>
+  );
 }
 
 export default function Home() {
@@ -38,7 +62,7 @@ export default function Home() {
       const res = await fetch('/api/scan');
       const json = await res.json();
       setData(json);
-    } catch (e) {
+    } catch {
       setError('Failed to fetch scan results');
     }
     setLoading(false);
@@ -83,26 +107,38 @@ export default function Home() {
               <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-cyan-400 bg-clip-text text-transparent">
                 ⚡ Arb Scanner
               </h1>
-              <p className="text-sm text-gray-500 mt-1">Polymarket × Kalshi Cross-Platform Arbitrage</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Cross-Platform Prediction Market Arbitrage
+              </p>
+              {data && (
+                <div className="flex gap-2 mt-2">
+                  {Object.entries(data.platformCounts).map(([p, count]) => (
+                    <span key={p} className="flex items-center gap-1 text-xs">
+                      <Badge platform={p} />
+                      <span className="text-gray-500 font-mono">{count}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-6 text-sm">
               {data && (
                 <>
                   <div className="text-center">
-                    <div className="text-gray-500">Markets Scanned</div>
-                    <div className="text-lg font-mono">{data.polymarketCount + data.kalshiCount}</div>
+                    <div className="text-gray-500">Total Markets</div>
+                    <div className="text-lg font-mono">{data.totalMarkets}</div>
                   </div>
                   <div className="text-center">
                     <div className="text-gray-500">Matches</div>
                     <div className="text-lg font-mono">{data.matchCount}</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-gray-500">Opportunities</div>
+                    <div className="text-gray-500">Arbs</div>
                     <div className="text-lg font-mono text-green-400">{data.opportunities.length}</div>
                   </div>
                   <div className="text-center">
-                    <div className="text-gray-500">Last Scan</div>
-                    <div className="font-mono text-xs">{new Date(data.timestamp).toLocaleTimeString()}</div>
+                    <div className="text-gray-500">Scan Time</div>
+                    <div className="font-mono text-xs">{(data.scanTime / 1000).toFixed(1)}s</div>
                   </div>
                 </>
               )}
@@ -164,10 +200,8 @@ export default function Home() {
                 <tr className="text-gray-500 text-left border-b border-gray-800">
                   <th className="py-3 px-3">#</th>
                   <th className="py-3 px-3">Question</th>
-                  <th className="py-3 px-3 text-center">Poly YES</th>
-                  <th className="py-3 px-3 text-center">Poly NO</th>
-                  <th className="py-3 px-3 text-center">Kalshi YES</th>
-                  <th className="py-3 px-3 text-center">Kalshi NO</th>
+                  <th className="py-3 px-3 text-center">Side A</th>
+                  <th className="py-3 px-3 text-center">Side B</th>
                   <th className="py-3 px-3 text-center">Spread</th>
                   <th className="py-3 px-3">Strategy</th>
                 </tr>
@@ -178,16 +212,24 @@ export default function Home() {
                     <td className="py-3 px-3 text-gray-500">{i + 1}</td>
                     <td className="py-3 px-3 max-w-xs">
                       <div className="font-medium truncate">{a.question}</div>
-                      <div className="flex gap-2 mt-1">
-                        <a href={a.poly_url} target="_blank" className="text-xs text-purple-400 hover:underline">Poly↗</a>
-                        <a href={a.kalshi_url} target="_blank" className="text-xs text-cyan-400 hover:underline">Kalshi↗</a>
+                      <div className="flex gap-2 mt-1 items-center flex-wrap">
+                        <a href={a.urlA} target="_blank" className={`text-xs ${platformTextColors[a.platformA] || 'text-gray-400'} hover:underline flex items-center gap-1`}>
+                          <Badge platform={a.platformA} /> ↗
+                        </a>
+                        <a href={a.urlB} target="_blank" className={`text-xs ${platformTextColors[a.platformB] || 'text-gray-400'} hover:underline flex items-center gap-1`}>
+                          <Badge platform={a.platformB} /> ↗
+                        </a>
                         <span className="text-xs text-gray-600">Match: {a.match_score}%</span>
                       </div>
                     </td>
-                    <td className="py-3 px-3 text-center font-mono">${a.poly_yes.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-center font-mono">${a.poly_no.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-center font-mono">${a.kalshi_yes.toFixed(2)}</td>
-                    <td className="py-3 px-3 text-center font-mono">${a.kalshi_no.toFixed(2)}</td>
+                    <td className="py-3 px-3 text-center">
+                      <div className="text-[10px] text-gray-500 mb-1">{a.platformA}</div>
+                      <div className="font-mono text-xs">Y ${a.yesA.toFixed(2)} / N ${a.noA.toFixed(2)}</div>
+                    </td>
+                    <td className="py-3 px-3 text-center">
+                      <div className="text-[10px] text-gray-500 mb-1">{a.platformB}</div>
+                      <div className="font-mono text-xs">Y ${a.yesB.toFixed(2)} / N ${a.noB.toFixed(2)}</div>
+                    </td>
                     <td className={`py-3 px-3 text-center font-mono font-bold ${spreadColor(a.spread)}`}>
                       {(a.spread * 100).toFixed(2)}%
                     </td>
