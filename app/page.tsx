@@ -15,6 +15,10 @@ interface Arb {
   noA: number;
   yesB: number;
   noB: number;
+  volume_a: number;
+  volume_b: number;
+  liquidity_a: number;
+  liquidity_b: number;
 }
 
 interface ScanResult {
@@ -43,7 +47,7 @@ const platformTextColors: Record<string, string> = {
 const ALL_PLATFORMS = ['Polymarket', 'Kalshi', 'Manifold', 'Metaculus'];
 
 type TextSize = 'small' | 'medium' | 'large';
-type SortKey = 'spread' | 'match_score' | 'platformA';
+type SortKey = 'spread' | 'match_score' | 'platformA' | 'volume';
 type SortDir = 'asc' | 'desc';
 type ViewTab = 'all' | 'watchlist';
 
@@ -89,6 +93,7 @@ export default function Home() {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [platformFilter, setPlatformFilter] = useState<Set<string>>(new Set(ALL_PLATFORMS));
   const [searchQuery, setSearchQuery] = useState('');
+  const [minVolume, setMinVolume] = useState(1000);
   const [showPlatformFilter, setShowPlatformFilter] = useState(false);
   const platformFilterRef = useRef<HTMLDivElement>(null);
 
@@ -176,6 +181,7 @@ export default function Home() {
     items = items.filter(a =>
       a.spread * 100 >= minSpread &&
       a.match_score >= minMatch &&
+      Math.min(a.volume_a || 0, a.volume_b || 0) >= minVolume &&
       (platformFilter.has(a.platformA) || platformFilter.has(a.platformB))
     );
     if (searchQuery.trim()) {
@@ -186,15 +192,16 @@ export default function Home() {
       let va: number | string, vb: number | string;
       if (sortKey === 'spread') { va = a.spread; vb = b.spread; }
       else if (sortKey === 'match_score') { va = a.match_score; vb = b.match_score; }
+      else if (sortKey === 'volume') { va = Math.min(a.volume_a || 0, a.volume_b || 0); vb = Math.min(b.volume_a || 0, b.volume_b || 0); }
       else { va = a.platformA; vb = b.platformA; }
       if (va < vb) return sortDir === 'asc' ? -1 : 1;
       if (va > vb) return sortDir === 'asc' ? 1 : -1;
       return 0;
     });
     return items;
-  }, [data, viewTab, watchlist, minSpread, minMatch, platformFilter, searchQuery, sortKey, sortDir]);
+  }, [data, viewTab, watchlist, minSpread, minMatch, minVolume, platformFilter, searchQuery, sortKey, sortDir]);
 
-  const activeFilterCount = (minSpread > 0 ? 1 : 0) + (minMatch > 0 ? 1 : 0) + (platformFilter.size < ALL_PLATFORMS.length ? 1 : 0) + (searchQuery.trim() ? 1 : 0);
+  const activeFilterCount = (minSpread > 0 ? 1 : 0) + (minMatch > 0 ? 1 : 0) + (minVolume > 0 ? 1 : 0) + (platformFilter.size < ALL_PLATFORMS.length ? 1 : 0) + (searchQuery.trim() ? 1 : 0);
 
   const sz = sizeConfig[textSize];
 
@@ -215,6 +222,18 @@ export default function Home() {
   const SortIcon = ({ column }: { column: SortKey }) => {
     if (sortKey !== column) return <span className="text-gray-700 ml-1">↕</span>;
     return <span className="text-purple-400 ml-1">{sortDir === 'desc' ? '↓' : '↑'}</span>;
+  };
+
+  const formatVolume = (v: number) => {
+    if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+    if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
+    return `$${Math.round(v)}`;
+  };
+
+  const volumeColor = (v: number) => {
+    if (v > 100_000) return 'text-green-400';
+    if (v >= 10_000) return 'text-yellow-400';
+    return 'text-red-400';
   };
 
   return (
@@ -338,6 +357,11 @@ export default function Home() {
             <input type="range" min="0" max="100" step="5" value={minMatch} onChange={e => setMinMatch(parseFloat(e.target.value))} className="w-28 accent-purple-500" />
             <span className="font-mono text-purple-400 text-sm w-10">{minMatch}%</span>
           </div>
+          <div className="flex items-center gap-2">
+            <label className="text-gray-400 text-sm">Min Vol:</label>
+            <input type="range" min="0" max="100000" step="1000" value={minVolume} onChange={e => setMinVolume(parseFloat(e.target.value))} className="w-28 accent-purple-500" />
+            <span className="font-mono text-purple-400 text-sm w-12">{minVolume >= 1000 ? `$${minVolume/1000}K` : `$${minVolume}`}</span>
+          </div>
           <div className="relative" ref={platformFilterRef}>
             <button onClick={() => setShowPlatformFilter(!showPlatformFilter)} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-sm transition">
               Platforms {platformFilter.size < ALL_PLATFORMS.length && `(${platformFilter.size})`} ▾
@@ -398,6 +422,11 @@ export default function Home() {
                   <th className={`${sz.padding} text-center`}>Side A</th>
                   <th className={`${sz.padding} text-center`}>Side B</th>
                   <th className={`${sz.padding} text-center`}>
+                    <button onClick={() => handleSort('volume')} className="hover:text-gray-300 transition flex items-center justify-center">
+                      Volume<SortIcon column="volume" />
+                    </button>
+                  </th>
+                  <th className={`${sz.padding} text-center`}>
                     <button onClick={() => handleSort('spread')} className="hover:text-gray-300 transition flex items-center justify-center">
                       Spread<SortIcon column="spread" />
                     </button>
@@ -439,6 +468,15 @@ export default function Home() {
                     <td className={`${sz.padding} text-center`}>
                       <div className="text-xs text-gray-500 mb-0.5">{a.platformB}</div>
                       <div className="font-mono">Y ${a.yesB.toFixed(2)} / N ${a.noB.toFixed(2)}</div>
+                    </td>
+                    <td className={`${sz.padding} text-center`}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className={`font-mono ${volumeColor(a.volume_a || 0)}`}>{a.platformA.slice(0,4)}: {formatVolume(a.volume_a || 0)}</span>
+                        <span className={`font-mono ${volumeColor(a.volume_b || 0)}`}>{a.platformB.slice(0,4)}: {formatVolume(a.volume_b || 0)}</span>
+                        {((a.liquidity_a || 0) > 0 || (a.liquidity_b || 0) > 0) && (
+                          <span className="text-gray-600 text-[10px]">liq: {formatVolume(a.liquidity_a || 0)} / {formatVolume(a.liquidity_b || 0)}</span>
+                        )}
+                      </div>
                     </td>
                     <td className={`${sz.padding} text-center font-mono font-bold ${spreadColor(a.spread)}`}>
                       {(a.spread * 100).toFixed(2)}%

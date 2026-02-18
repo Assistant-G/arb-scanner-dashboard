@@ -8,6 +8,9 @@ interface Market {
   yes_price: number;
   no_price: number;
   url: string;
+  volume: number;
+  volume24h: number;
+  liquidity: number;
 }
 
 interface Match {
@@ -30,6 +33,10 @@ interface Arb {
   noA: number;
   yesB: number;
   noB: number;
+  volume_a: number;
+  volume_b: number;
+  liquidity_a: number;
+  liquidity_b: number;
 }
 
 function normalize(text: string): string {
@@ -74,6 +81,8 @@ async function fetchPolymarket(): Promise<Market[]> {
             ? JSON.parse(mkt.outcomePrices) : mkt.outcomePrices;
         } catch { continue; }
         if (!prices || prices.length < 2) continue;
+        const polyVolume = parseFloat(String(mkt.volumeNum || mkt.volume || 0)) || 0;
+        const polySpread = Math.abs(parseFloat(String(prices[0])) - parseFloat(String(prices[1])));
         markets.push({
           platform: 'Polymarket',
           id: `poly-${mkt.conditionId || mkt.id || ''}`,
@@ -82,6 +91,9 @@ async function fetchPolymarket(): Promise<Market[]> {
           yes_price: parseFloat(String(prices[0])),
           no_price: parseFloat(String(prices[1])),
           url: `https://polymarket.com/event/${event.slug || ''}`,
+          volume: polyVolume,
+          volume24h: 0,
+          liquidity: polySpread > 0 ? polyVolume / (polySpread * 100) : 0,
         });
       }
     }
@@ -127,6 +139,9 @@ async function fetchKalshi(): Promise<Market[]> {
             yes_price: Math.round(yes_price * 10000) / 10000,
             no_price: Math.round(no_price * 10000) / 10000,
             url: `https://kalshi.com/events/${ticker}`,
+            volume: parseFloat(String(mkt.volume || 0)) || 0,
+            volume24h: parseFloat(String(mkt.volume_24h || 0)) || 0,
+            liquidity: parseFloat(String(mkt.liquidity || mkt.open_interest || 0)) || 0,
           });
         }
         return result;
@@ -164,6 +179,9 @@ async function fetchManifold(): Promise<Market[]> {
         yes_price: Math.round(prob * 10000) / 10000,
         no_price: Math.round((1 - prob) * 10000) / 10000,
         url: mkt.url || `https://manifold.markets/${mkt.creatorUsername}/${mkt.slug}`,
+        volume: parseFloat(String(mkt.volume || 0)) || 0,
+        volume24h: parseFloat(String(mkt.volume24Hours || 0)) || 0,
+        liquidity: parseFloat(String(mkt.totalLiquidity || 0)) || 0,
       });
     }
   } catch (e) { console.error('[Manifold]', e); }
@@ -192,6 +210,9 @@ async function fetchMetaculus(): Promise<Market[]> {
         yes_price: Math.round(p * 10000) / 10000,
         no_price: Math.round((1 - p) * 10000) / 10000,
         url: `https://www.metaculus.com/questions/${item.id}/`,
+        volume: 0,
+        volume24h: 0,
+        liquidity: 0,
       });
     }
   } catch (e) { console.error('[Metaculus]', e); }
@@ -258,6 +279,8 @@ function findArbitrage(matches: Match[]): Arb[] {
         platformA: a.platform, platformB: b.platform,
         urlA: a.url, urlB: b.url,
         yesA: a.yes_price, noA: a.no_price, yesB: b.yes_price, noB: b.no_price,
+        volume_a: a.volume, volume_b: b.volume,
+        liquidity_a: a.liquidity, liquidity_b: b.liquidity,
       });
     }
   }
